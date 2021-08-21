@@ -1,5 +1,6 @@
 #![warn(rust_2018_idioms, clippy::all)]
 #![deny(clippy::correctness)]
+#![allow(clippy::let_and_return)]
 
 use anyhow::{Context, Result};
 use argh::FromArgs;
@@ -33,16 +34,49 @@ fn main() -> Result<()> {
 
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
-    let old_tree = repo
-        .revparse_single("master")
-        .context("error parsing old rev")?
-        .peel_to_tree()
-        .context("error peeling old object to tree")?;
-    let new_tree = repo
+
+    let head_commit = repo
         .revparse_single("HEAD")
-        .context("error parsing new rev")?
-        .peel_to_tree()
-        .context("error peeling new object to tree")?;
+        .and_then(|obj| obj.peel_to_commit())
+        .context("error parsing head commit")?;
+    let parent_commit = repo
+        .revparse_single("master")
+        .and_then(|obj| obj.peel_to_commit())
+        .context("error parsing parent commit")?;
+    let base_commit = if head_commit.id() == parent_commit.id() {
+        // if HEAD is master, use the root commit of the repo
+        let root_commit = repo
+            .revwalk()
+            .and_then(|mut revwalk| {
+                revwalk.push_head()?;
+                revwalk
+                    .find_map(|id| {
+                        (|| {
+                            let id = id?;
+                            let commit = repo.find_commit(id)?;
+                            if commit.parent_count() == 0 {
+                                return Ok(Some(commit));
+                            }
+                            Ok(None)
+                        })()
+                        .transpose()
+                    })
+                    .transpose()
+            })
+            .context("error finding root commit")?
+            .context("root commit not found")?;
+        root_commit
+    } else {
+        // otherwise, find the merge base between HEAD and master
+        let merge_base_commit = repo
+            .merge_base(head_commit.id(), parent_commit.id())
+            .and_then(|id| repo.find_commit(id))
+            .context("error getting merge base commit")?;
+        merge_base_commit
+    };
+
+    let old_tree = base_commit.tree().context("error getting old tree")?;
+    let new_tree = head_commit.tree().context("error getting new tree")?;
     let diff = repo
         .diff_tree_to_tree(
             Some(&old_tree),
@@ -105,7 +139,7 @@ fn main() -> Result<()> {
             }
         });
     for idx in (0..lines.len()).rev() {
-        let line = &mut lines[idx];
+        let line = &lines[idx];
         if removed.contains(&line.content) {
             lines.remove(idx);
         }
