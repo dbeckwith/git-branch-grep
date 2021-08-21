@@ -2,17 +2,25 @@
 #![deny(clippy::correctness)]
 #![allow(clippy::let_and_return)]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use argh::FromArgs;
 use itertools::{Either, Itertools};
 use regex::Regex;
 use std::{collections::HashSet, ops::Range, path::PathBuf, str};
 
 /// Search the content of diffs between git tags.
+///
+/// This utility takes a diff between HEAD and the parent branch and filters
+/// lines in the diff by the search text. The search text is interpreted as a
+/// regular expression, so regex syntax must be escaped.
 #[derive(Debug, FromArgs)]
 struct Args {
+    /// the text to search with
     #[argh(positional)]
     search: Regex,
+    /// the name of the parent branch to diff against
+    #[argh(option, short = 'p')]
+    parent: Option<String>,
 }
 
 #[derive(Debug)]
@@ -30,42 +38,52 @@ struct Line {
 }
 
 fn main() -> Result<()> {
-    let Args { search } = argh::from_env::<Args>();
+    let Args {
+        search,
+        parent: parent_branch_name,
+    } = argh::from_env::<Args>();
 
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
 
+    let root_branch_name = "master";
     let head_commit = repo
-        .revparse_single("HEAD")
-        .and_then(|obj| obj.peel_to_commit())
-        .context("error parsing head commit")?;
+        .head()
+        .and_then(|reference| reference.peel_to_commit())
+        .context("error resolving head commit")?;
+    let parent_branch_name =
+        parent_branch_name.as_deref().unwrap_or(root_branch_name);
     let parent_commit = repo
-        .revparse_single("master")
-        .and_then(|obj| obj.peel_to_commit())
-        .context("error parsing parent commit")?;
+        .revparse_single(parent_branch_name)
+        .and_then(|object| object.peel_to_commit())
+        .context("error resolving parent commit")?;
     let base_commit = if head_commit.id() == parent_commit.id() {
-        // if HEAD is master, use the root commit of the repo
-        let root_commit = repo
-            .revwalk()
-            .and_then(|mut revwalk| {
-                revwalk.push_head()?;
-                revwalk
-                    .find_map(|id| {
-                        (|| {
-                            let id = id?;
-                            let commit = repo.find_commit(id)?;
-                            if commit.parent_count() == 0 {
-                                return Ok(Some(commit));
-                            }
-                            Ok(None)
-                        })()
+        if parent_branch_name == root_branch_name {
+            // if HEAD is on the root branch, use the root commit of the repo
+            let root_commit = repo
+                .revwalk()
+                .and_then(|mut revwalk| {
+                    revwalk.push_head()?;
+                    revwalk
+                        .find_map(|id| {
+                            (|| {
+                                let id = id?;
+                                let commit = repo.find_commit(id)?;
+                                if commit.parent_count() == 0 {
+                                    return Ok(Some(commit));
+                                }
+                                Ok(None)
+                            })()
+                            .transpose()
+                        })
                         .transpose()
-                    })
-                    .transpose()
-            })
-            .context("error finding root commit")?
-            .context("root commit not found")?;
-        root_commit
+                })
+                .context("error finding root commit")?
+                .context("root commit not found")?;
+            root_commit
+        } else {
+            bail!("HEAD and parent refs are the same")
+        }
     } else {
         // otherwise, find the merge base between HEAD and master
         let merge_base_commit = repo
