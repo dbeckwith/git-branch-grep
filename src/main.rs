@@ -131,8 +131,8 @@ fn main() -> Result<()> {
     let base_commit = if let Some(base_commit_rev) = base_commit_rev {
         debug!("using direct base reference");
         let base_commit = repo
-            .revparse_single(&base_commit_rev)
-            .and_then(|object| object.peel_to_commit())
+            .resolve_reference_from_short_name(&base_commit_rev)
+            .and_then(|reference| reference.peel_to_commit())
             .context("error resolving base commit")?;
         base_commit
     } else {
@@ -146,8 +146,8 @@ fn main() -> Result<()> {
         let parent_branch_name =
             parent_branch_name.as_deref().unwrap_or(root_branch_name);
         let parent_commit = repo
-            .revparse_single(parent_branch_name)
-            .and_then(|object| object.peel_to_commit())
+            .resolve_reference_from_short_name(parent_branch_name)
+            .and_then(|reference| reference.peel_to_commit())
             .context("error resolving parent commit")?;
         debug!("parent commit: {}", parent_commit.id());
 
