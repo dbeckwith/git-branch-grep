@@ -159,12 +159,19 @@ fn main() -> Result<()> {
 
     let diff_lines =
         process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
-            // TODO: ignore binary files
             let added = match line.origin_value() {
                 git2::DiffLineType::Addition => true,
                 git2::DiffLineType::Deletion => false,
                 _ => return Ok(None),
             };
+            let file = if added {
+                delta.new_file()
+            } else {
+                delta.old_file()
+            };
+            if file.is_binary() {
+                return Ok(None);
+            }
             let content = str::from_utf8(line.content())
                 .context("error converting line content to utf8")?;
             let content = content.trim();
@@ -173,7 +180,7 @@ fn main() -> Result<()> {
                 .new_lineno()
                 .or_else(|| line.old_lineno())
                 .expect("no lineno");
-            let path = match delta.new_file().path() {
+            let path = match file.path() {
                 Some(path) => path,
                 None => return Ok(None),
             };
