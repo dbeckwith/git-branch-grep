@@ -137,11 +137,9 @@ fn main() -> Result<()> {
         eprintln!("diff base commit: {}", base_commit.id());
     }
     let old_tree = base_commit.tree().context("error getting old tree")?;
-    let new_tree = head_commit.tree().context("error getting new tree")?;
     let diff = repo
-        .diff_tree_to_tree(
+        .diff_tree_to_workdir_with_index(
             Some(&old_tree),
-            Some(&new_tree),
             Some(
                 git2::DiffOptions::new()
                     .include_untracked(true)
@@ -152,14 +150,16 @@ fn main() -> Result<()> {
                     .context_lines(0),
             ),
         )
-        .and_then(|mut diff| {
-            diff.find_similar(Some(git2::DiffFindOptions::new().all(true)))?;
-            Ok(diff)
-        })
+        // FIXME: find_similar is too aggressive
+        // .and_then(|mut diff| {
+        //     diff.find_similar(Some(git2::DiffFindOptions::new().all(true)))?;
+        //     Ok(diff)
+        // })
         .context("error diffing")?;
 
     let diff_lines =
         process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
+            // TODO: ignore binary files
             let added = match line.origin_value() {
                 git2::DiffLineType::Addition => true,
                 git2::DiffLineType::Deletion => false,
