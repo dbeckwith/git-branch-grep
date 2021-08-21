@@ -144,9 +144,9 @@ where
     ) -> Result<Option<T>>,
 {
     let mut results = Vec::new();
-    let mut print_result = Ok(());
-    let _ =
-        diff.print(format, |delta, hunk, line| match cb(delta, hunk, line) {
+    let mut cb_result = Ok(());
+    let print_result = diff
+        .print(format, |delta, hunk, line| match cb(delta, hunk, line) {
             Ok(value) => {
                 if let Some(value) = value {
                     results.push(value);
@@ -154,9 +154,10 @@ where
                 true
             },
             Err(error) => {
-                print_result = Err(error);
+                cb_result = Err(error);
                 false
             },
-        });
-    print_result.map(|()| results)
+        })
+        .context("error in iterating diff lines");
+    cb_result.and(print_result).map(|()| results)
 }
