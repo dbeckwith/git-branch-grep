@@ -21,6 +21,9 @@ struct Args {
     /// the name of the parent branch to diff against, defaults to "master"
     #[argh(option, short = 'p')]
     parent: Option<String>,
+    /// turn on debug output
+    #[argh(switch)]
+    debug: bool,
 }
 
 #[derive(Debug)]
@@ -41,22 +44,31 @@ fn main() -> Result<()> {
     let Args {
         search,
         parent: parent_branch_name,
+        debug,
     } = argh::from_env::<Args>();
 
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
 
-    let root_branch_name = "master";
     let head_commit = repo
         .head()
         .and_then(|reference| reference.peel_to_commit())
         .context("error resolving head commit")?;
+    if debug {
+        eprintln!("HEAD commit: {}", head_commit.id());
+    }
+
+    let root_branch_name = "master";
     let parent_branch_name =
         parent_branch_name.as_deref().unwrap_or(root_branch_name);
     let parent_commit = repo
         .revparse_single(parent_branch_name)
         .and_then(|object| object.peel_to_commit())
         .context("error resolving parent commit")?;
+    if debug {
+        eprintln!("parent commit: {}", parent_commit.id());
+    }
+
     let base_commit = if head_commit.id() == parent_commit.id() {
         if parent_branch_name == root_branch_name {
             // if HEAD is on the root branch, use the root commit of the repo
@@ -80,6 +92,11 @@ fn main() -> Result<()> {
                 })
                 .context("error finding root commit")?
                 .context("root commit not found")?;
+            if debug {
+                eprintln!(
+                    "HEAD is on root branch, using root commit as diff base"
+                );
+            }
             root_commit
         } else {
             bail!("HEAD and parent refs are the same")
@@ -90,9 +107,15 @@ fn main() -> Result<()> {
             .merge_base(head_commit.id(), parent_commit.id())
             .and_then(|id| repo.find_commit(id))
             .context("error getting merge base commit")?;
+        if debug {
+            eprintln!("using merge base between HEAD and parent as diff base");
+        }
         merge_base_commit
     };
 
+    if debug {
+        eprintln!("diff base commit: {}", base_commit.id());
+    }
     let old_tree = base_commit.tree().context("error getting old tree")?;
     let new_tree = head_commit.tree().context("error getting new tree")?;
     let diff = repo
