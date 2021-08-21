@@ -67,6 +67,14 @@ fn main() -> Result<()> {
         debug,
     } = argh::from_env::<Args>();
 
+    macro_rules! debug {
+        ($msg:literal $($args:tt)*) => {
+            if debug {
+                eprintln!(concat!("\x1b[90m[DEBUG]\x1b[m ", $msg) $($args)*);
+            }
+        };
+    }
+
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
 
@@ -75,7 +83,7 @@ fn main() -> Result<()> {
         .and_then(|reference| reference.peel_to_commit())
         .context("error resolving head commit")?;
     if debug {
-        eprintln!("HEAD commit: {}", head_commit.id());
+        debug!("HEAD commit: {}", head_commit.id());
     }
 
     let root_branch_name = "master";
@@ -86,7 +94,7 @@ fn main() -> Result<()> {
         .and_then(|object| object.peel_to_commit())
         .context("error resolving parent commit")?;
     if debug {
-        eprintln!("parent commit: {}", parent_commit.id());
+        debug!("parent commit: {}", parent_commit.id());
     }
 
     let base_commit = if head_commit.id() == parent_commit.id() {
@@ -113,7 +121,7 @@ fn main() -> Result<()> {
                 .context("error finding root commit")?
                 .context("root commit not found")?;
             if debug {
-                eprintln!(
+                debug!(
                     "HEAD is on root branch, using root commit as diff base"
                 );
             }
@@ -128,13 +136,13 @@ fn main() -> Result<()> {
             .and_then(|id| repo.find_commit(id))
             .context("error getting merge base commit")?;
         if debug {
-            eprintln!("using merge base between HEAD and parent as diff base");
+            debug!("using merge base between HEAD and parent as diff base");
         }
         merge_base_commit
     };
 
     if debug {
-        eprintln!("diff base commit: {}", base_commit.id());
+        debug!("diff base commit: {}", base_commit.id());
     }
     let old_tree = base_commit.tree().context("error getting old tree")?;
     let diff = repo
@@ -185,22 +193,27 @@ fn main() -> Result<()> {
                 None => return Ok(None),
             };
             if let Some(r#match) = search.find(content) {
-                Ok(Some(DiffLine {
-                    added,
-                    line: Line {
-                        content: content.to_owned(),
-                        range: r#match.range(),
-                        lineno,
-                        path: path.to_owned(),
-                    },
-                }))
+                let line = Line {
+                    content: content.to_owned(),
+                    range: r#match.range(),
+                    lineno,
+                    path: path.to_owned(),
+                };
+                if debug {
+                    debug!(
+                        "{} line: {}",
+                        if added { "added" } else { "removed" },
+                        line
+                    );
+                }
+                Ok(Some(DiffLine { added, line }))
             } else {
                 Ok(None)
             }
         })
         .context("error processing diff")?;
 
-    let (mut lines, removed): (Vec<_>, HashSet<_>) = diff_lines
+    let (lines, mut removed): (Vec<_>, HashSet<_>) = diff_lines
         .into_iter()
         .partition_map(|DiffLine { added, line }| {
             if added {
@@ -209,18 +222,15 @@ fn main() -> Result<()> {
                 Either::Right(line.content)
             }
         });
-    for idx in (0..lines.len()).rev() {
-        let line = &lines[idx];
-        if removed.contains(&line.content) {
-            if debug {
-                eprintln!("filtering out removed line: {}", line);
-            }
-            lines.remove(idx);
-        }
-    }
 
     for line in lines {
-        println!("{}", line);
+        if removed.remove(&line.content) {
+            if debug {
+                debug!("filtering out added & removed line: {}", line);
+            }
+        } else {
+            println!("{}", line);
+        }
     }
 
     Ok(())
