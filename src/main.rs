@@ -18,7 +18,7 @@ struct Args {
     /// the text to search with
     #[argh(positional)]
     search: Regex,
-    /// the name of the parent branch to diff against
+    /// the name of the parent branch to diff against, defaults to "master"
     #[argh(option, short = 'p')]
     parent: Option<String>,
 }
