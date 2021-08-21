@@ -2,7 +2,7 @@
 #![deny(clippy::correctness)]
 #![allow(clippy::let_and_return)]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Error, Result};
 use argh::FromArgs;
 use regex::Regex;
 use std::{
@@ -13,6 +13,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     str,
+    sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 
@@ -36,7 +37,32 @@ struct Args {
     /// turn on debug output
     #[argh(switch)]
     debug: bool,
+    /// color output, "always", "auto" (default), or "never"
+    #[argh(option, default = "ColorOption::Auto")]
+    color: ColorOption,
 }
+
+#[derive(Debug)]
+enum ColorOption {
+    Always,
+    Auto,
+    Never,
+}
+
+impl str::FromStr for ColorOption {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "always" => Ok(Self::Always),
+            "auto" => Ok(Self::Auto),
+            "never" => Ok(Self::Never),
+            s => bail!("{:?} is not a valid color option", s),
+        }
+    }
+}
+
+static COLOR: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, PartialEq, Eq)]
 struct Line {
@@ -55,14 +81,18 @@ impl fmt::Display for Line {
             path,
         } = self;
         let path = path.display();
-        let before = &content[..range.start];
-        let r#match = &content[range.clone()];
-        let after = &content[range.end..];
-        write!(
-            f,
-            "\x1b[32m{}\x1b[m:\x1b[33m{}\x1b[m: {}\x1b[36;1m{}\x1b[m{}",
-            path, lineno, before, r#match, after
-        )
+        if COLOR.load(Ordering::SeqCst) {
+            let before = &content[..range.start];
+            let r#match = &content[range.clone()];
+            let after = &content[range.end..];
+            write!(
+                f,
+                "\x1b[32m{}\x1b[m:\x1b[33m{}\x1b[m: {}\x1b[36;1m{}\x1b[m{}",
+                path, lineno, before, r#match, after
+            )
+        } else {
+            write!(f, "{}:{}: {}", path, lineno, content)
+        }
     }
 }
 
@@ -111,12 +141,26 @@ fn main() -> Result<()> {
         parent: parent_branch_name,
         diff_base: base_commit_ref,
         debug,
+        color,
     } = argh::from_env::<Args>();
+
+    COLOR.store(
+        match color {
+            ColorOption::Always => true,
+            ColorOption::Auto => atty::is(atty::Stream::Stdout),
+            ColorOption::Never => false,
+        },
+        Ordering::SeqCst,
+    );
 
     macro_rules! debug {
         ($msg:literal $($args:tt)*) => {
             if debug {
-                eprintln!(concat!("\x1b[90m[DEBUG]\x1b[m ", $msg) $($args)*);
+                if COLOR.load(Ordering::SeqCst) {
+                    eprintln!(concat!("\x1b[90m[DEBUG]\x1b[m ", $msg) $($args)*);
+                } else {
+                    eprintln!(concat!("[DEBUG] ", $msg) $($args)*);
+                }
             }
         };
     }

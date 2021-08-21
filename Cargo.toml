@@ -11,5 +11,6 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0.41"
 argh = "0.1.4"
+atty = "0.2.14"
 git2 = "0.13.20"
 regex = "1.5.4"
