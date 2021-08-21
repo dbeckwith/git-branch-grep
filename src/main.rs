@@ -4,11 +4,12 @@
 
 use anyhow::{bail, Context, Result};
 use argh::FromArgs;
-use itertools::{Either, Itertools};
 use regex::Regex;
 use std::{
-    collections::HashSet,
+    borrow::Borrow,
+    collections::{hash_map, HashMap},
     fmt,
+    hash::Hash,
     ops::Range,
     path::PathBuf,
     str,
@@ -31,12 +32,6 @@ struct Args {
     /// turn on debug output
     #[argh(switch)]
     debug: bool,
-}
-
-#[derive(Debug)]
-struct DiffLine {
-    added: bool,
-    line: Line,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,6 +62,45 @@ impl fmt::Display for Line {
     }
 }
 
+struct MultiSet<T>(HashMap<T, usize>);
+
+impl<T> MultiSet<T>
+where
+    T: Hash + Eq,
+{
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    fn insert(&mut self, k: T) {
+        match self.0.entry(k) {
+            hash_map::Entry::Occupied(mut entry) => {
+                *entry.get_mut() += 1;
+            },
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(1);
+            },
+        }
+    }
+
+    fn remove<Q>(&mut self, k: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        if let Some(count) = self.0.get_mut(k) {
+            if *count == 1 {
+                self.0.remove(k);
+            } else {
+                *count -= 1;
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let Args {
         search,
@@ -90,9 +124,7 @@ fn main() -> Result<()> {
         .head()
         .and_then(|reference| reference.peel_to_commit())
         .context("error resolving head commit")?;
-    if debug {
-        debug!("HEAD commit: {}", head_commit.id());
-    }
+    debug!("HEAD commit: {}", head_commit.id());
 
     let root_branch_name = "master";
     let parent_branch_name =
@@ -101,9 +133,7 @@ fn main() -> Result<()> {
         .revparse_single(parent_branch_name)
         .and_then(|object| object.peel_to_commit())
         .context("error resolving parent commit")?;
-    if debug {
-        debug!("parent commit: {}", parent_commit.id());
-    }
+    debug!("parent commit: {}", parent_commit.id());
 
     let base_commit = if head_commit.id() == parent_commit.id() {
         if parent_branch_name == root_branch_name {
@@ -128,11 +158,7 @@ fn main() -> Result<()> {
                 })
                 .context("error finding root commit")?
                 .context("root commit not found")?;
-            if debug {
-                debug!(
-                    "HEAD is on root branch, using root commit as diff base"
-                );
-            }
+            debug!("HEAD is on root branch, using root commit as diff base");
             root_commit
         } else {
             bail!("HEAD and parent refs are the same")
@@ -143,16 +169,12 @@ fn main() -> Result<()> {
             .merge_base(head_commit.id(), parent_commit.id())
             .and_then(|id| repo.find_commit(id))
             .context("error getting merge base commit")?;
-        if debug {
-            debug!("using merge base between HEAD and parent as diff base");
-        }
+        debug!("using merge base between HEAD and parent as diff base");
         merge_base_commit
     };
     let commit_resolution_timer = commit_resolution_timer.elapsed();
 
-    if debug {
-        debug!("diff base commit: {}", base_commit.id());
-    }
+    debug!("diff base commit: {}", base_commit.id());
     let diff_timer = Instant::now();
     let old_tree = base_commit.tree().context("error getting old tree")?;
     let diff = repo
@@ -177,73 +199,66 @@ fn main() -> Result<()> {
     let diff_timer = diff_timer.elapsed();
 
     let diff_process_timer = Instant::now();
-    let diff_lines =
-        process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
-            let added = match line.origin_value() {
-                git2::DiffLineType::Addition => true,
-                git2::DiffLineType::Deletion => false,
-                _ => return Ok(None),
-            };
-            let file = if added {
-                delta.new_file()
-            } else {
-                delta.old_file()
-            };
-            if file.is_binary() {
-                return Ok(None);
-            }
-            let content = str::from_utf8(line.content())
-                .context("error converting line content to utf8")?;
-            let content = content.trim();
-            // if the line is either added or deleted, one of these must be Some
-            let lineno = line
-                .new_lineno()
-                .or_else(|| line.old_lineno())
-                .expect("no lineno");
-            let path = match file.path() {
-                Some(path) => path,
-                None => return Ok(None),
-            };
-            if let Some(r#match) = search.find(content) {
+    let mut added_lines = Vec::new();
+    let mut removed_lines = MultiSet::new();
+    process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
+        let added = match line.origin_value() {
+            git2::DiffLineType::Addition => true,
+            git2::DiffLineType::Deletion => false,
+            _ => return Ok(()),
+        };
+        let file = if added {
+            delta.new_file()
+        } else {
+            delta.old_file()
+        };
+        if file.is_binary() {
+            return Ok(());
+        }
+        let content = str::from_utf8(line.content())
+            .context("error converting line content to utf8")?;
+        let content = content.trim();
+        // if the line is either added or deleted, one of these must be Some
+        let lineno = line
+            .new_lineno()
+            .or_else(|| line.old_lineno())
+            .expect("no lineno");
+        let path = match file.path() {
+            Some(path) => path,
+            None => return Ok(()),
+        };
+        if let Some(r#match) = search.find(content) {
+            if added {
                 let line = Line {
                     content: content.to_owned(),
                     range: r#match.range(),
                     lineno,
                     path: path.to_owned(),
                 };
-                if debug {
-                    debug!(
-                        "{} line: {}",
-                        if added { "added" } else { "removed" },
-                        line
-                    );
-                }
-                Ok(Some(DiffLine { added, line }))
+                debug!("added line: {}", line);
+                added_lines.push(line);
             } else {
-                Ok(None)
+                if debug {
+                    let line = Line {
+                        content: content.to_owned(),
+                        range: r#match.range(),
+                        lineno,
+                        path: path.to_owned(),
+                    };
+                    debug!("removed line: {}", line);
+                }
+                removed_lines.insert(content.to_owned());
             }
-        })
-        .context("error processing diff")?;
+        }
+        Ok(())
+    })
+    .context("error processing diff")?;
     let diff_process_timer = diff_process_timer.elapsed();
 
-    let line_partition_timer = Instant::now();
-    let (lines, mut removed): (Vec<_>, HashSet<_>) = diff_lines
-        .into_iter()
-        .partition_map(|DiffLine { added, line }| {
-            if added {
-                Either::Left(line)
-            } else {
-                Either::Right(line.content)
-            }
-        });
-    let line_partition_timer = line_partition_timer.elapsed();
-
     let line_print_timer = Instant::now();
-    for line in lines {
-        if removed.remove(&line.content) {
-            if debug {
-                debug!("filtering out added & removed line: {}", line);
-            }
+    for line in added_lines {
+        if removed_lines.remove(&line.content) {
+            debug!("filtering out added & removed line: {}", line);
         } else {
             println!("{}", line);
         }
@@ -260,40 +275,33 @@ fn main() -> Result<()> {
         show_timer!("commit resolution", commit_resolution_timer);
         show_timer!("diff", diff_timer);
         show_timer!("diff process", diff_process_timer);
-        show_timer!("line partition", line_partition_timer);
         show_timer!("line print", line_print_timer);
     }
 
     Ok(())
 }
 
-fn process_diff<F, T>(
+fn process_diff<F>(
     diff: &git2::Diff<'_>,
     format: git2::DiffFormat,
     mut cb: F,
-) -> Result<Vec<T>>
+) -> Result<()>
 where
     F: FnMut(
         git2::DiffDelta<'_>,
         Option<git2::DiffHunk<'_>>,
         git2::DiffLine<'_>,
-    ) -> Result<Option<T>>,
+    ) -> Result<()>,
 {
-    let mut results = Vec::new();
     let mut cb_result = Ok(());
     let print_result = diff
         .print(format, |delta, hunk, line| match cb(delta, hunk, line) {
-            Ok(value) => {
-                if let Some(value) = value {
-                    results.push(value);
-                }
-                true
-            },
+            Ok(()) => true,
             Err(error) => {
                 cb_result = Err(error);
                 false
             },
         })
         .context("error in iterating diff lines");
-    cb_result.and(print_result).map(|()| results)
+    cb_result.and(print_result)
 }
