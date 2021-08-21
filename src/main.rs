@@ -218,7 +218,7 @@ fn main() -> Result<()> {
         .context("error diffing")?;
     let diff_timer = diff_timer.elapsed();
 
-    let diff_process_timer = Instant::now();
+    let process_diff_timer = Instant::now();
     let mut added_lines = Vec::new();
     let mut removed_lines = MultiSet::new();
     process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
@@ -273,7 +273,7 @@ fn main() -> Result<()> {
         Ok(())
     })
     .context("error processing diff")?;
-    let diff_process_timer = diff_process_timer.elapsed();
+    let process_diff_timer = process_diff_timer.elapsed();
 
     let line_print_timer = Instant::now();
     for line in added_lines {
@@ -294,7 +294,7 @@ fn main() -> Result<()> {
         }
         show_timer!("commit resolution", commit_resolution_timer);
         show_timer!("diff", diff_timer);
-        show_timer!("diff process", diff_process_timer);
+        show_timer!("process diff", process_diff_timer);
         show_timer!("line print", line_print_timer);
     }
 
