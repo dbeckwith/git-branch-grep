@@ -26,7 +26,8 @@ struct Args {
     /// the text to search with
     #[argh(positional)]
     search: Regex,
-    /// the name of the parent branch to diff against, defaults to "master"
+    /// the name of the parent branch to diff against, defaults to
+    /// "master"/"main"
     #[argh(option, short = 'p')]
     parent: Option<String>,
     /// a reference to a commit to diff against, overrides `parent`
@@ -108,7 +109,7 @@ fn main() -> Result<()> {
     let Args {
         search,
         parent: parent_branch_name,
-        diff_base: base_commit_rev,
+        diff_base: base_commit_ref,
         debug,
     } = argh::from_env::<Args>();
 
@@ -120,7 +121,7 @@ fn main() -> Result<()> {
         };
     }
 
-    if parent_branch_name.is_some() && base_commit_rev.is_some() {
+    if parent_branch_name.is_some() && base_commit_ref.is_some() {
         bail!("cannot specify both parent branch and direct diff base options");
     }
 
@@ -128,10 +129,10 @@ fn main() -> Result<()> {
         .context("error opening repository")?;
 
     let commit_resolution_timer = Instant::now();
-    let base_commit = if let Some(base_commit_rev) = base_commit_rev {
+    let base_commit = if let Some(base_commit_ref) = base_commit_ref {
         debug!("using direct base reference");
         let base_commit = repo
-            .resolve_reference_from_short_name(&base_commit_rev)
+            .resolve_reference_from_short_name(&base_commit_ref)
             .and_then(|reference| reference.peel_to_commit())
             .context("error resolving base commit")?;
         base_commit
@@ -142,17 +143,26 @@ fn main() -> Result<()> {
             .context("error resolving head commit")?;
         debug!("HEAD commit: {}", head_commit.id());
 
-        let root_branch_name = "master";
-        let parent_branch_name =
-            parent_branch_name.as_deref().unwrap_or(root_branch_name);
-        let parent_commit = repo
-            .resolve_reference_from_short_name(parent_branch_name)
-            .and_then(|reference| reference.peel_to_commit())
-            .context("error resolving parent commit")?;
+        let root_branch_head_commit =
+            std::array::IntoIter::new(["refs/heads/master", "refs/heads/main"])
+                .find_map(|name| {
+                    repo.find_reference(name)
+                        .and_then(|reference| reference.peel_to_commit())
+                        .ok()
+                })
+                .context("root branch not found")?;
+        let parent_commit = if let Some(parent_branch_name) = parent_branch_name
+        {
+            repo.find_reference(&format!("refs/heads/{}", parent_branch_name))
+                .and_then(|reference| reference.peel_to_commit())
+                .context("error resolving parent commit")?
+        } else {
+            root_branch_head_commit.clone()
+        };
         debug!("parent commit: {}", parent_commit.id());
 
         if head_commit.id() == parent_commit.id() {
-            if parent_branch_name == root_branch_name {
+            if head_commit.id() == root_branch_head_commit.id() {
                 // if HEAD is on the root branch, use the root commit of the
                 // repo
                 debug!(
