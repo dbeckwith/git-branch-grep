@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 use argh::FromArgs;
 use itertools::{Either, Itertools};
 use regex::Regex;
-use std::{collections::HashSet, ops::Range, path::PathBuf, str};
+use std::{collections::HashSet, fmt, ops::Range, path::PathBuf, str};
 
 /// Search the content of diffs between git tags.
 ///
@@ -38,6 +38,26 @@ struct Line {
     range: Range<usize>,
     lineno: u32,
     path: PathBuf,
+}
+
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Line {
+            content,
+            range,
+            lineno,
+            path,
+        } = self;
+        let path = path.display();
+        let before = &content[..range.start];
+        let r#match = &content[range.clone()];
+        let after = &content[range.end..];
+        write!(
+            f,
+            "\x1b[32m{}\x1b[m:\x1b[33m{}\x1b[m: {}\x1b[36;1m{}\x1b[m{}",
+            path, lineno, before, r#match, after
+        )
+    }
 }
 
 fn main() -> Result<()> {
@@ -185,25 +205,15 @@ fn main() -> Result<()> {
     for idx in (0..lines.len()).rev() {
         let line = &lines[idx];
         if removed.contains(&line.content) {
+            if debug {
+                eprintln!("filtering out removed line: {}", line);
+            }
             lines.remove(idx);
         }
     }
 
-    for Line {
-        content,
-        range,
-        lineno,
-        path,
-    } in lines
-    {
-        let path = path.display();
-        let before = &content[..range.start];
-        let after = &content[range.end..];
-        let r#match = &content[range];
-        println!(
-            "\x1b[32m{}\x1b[m:\x1b[33m{}\x1b[m: {}\x1b[36;1m{}\x1b[m{}",
-            path, lineno, before, r#match, after
-        );
+    for line in lines {
+        println!("{}", line);
     }
 
     Ok(())
