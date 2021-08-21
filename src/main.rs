@@ -29,6 +29,9 @@ struct Args {
     /// the name of the parent branch to diff against, defaults to "master"
     #[argh(option, short = 'p')]
     parent: Option<String>,
+    /// a reference to a commit to diff against, overrides `parent`
+    #[argh(option, short = 'd')]
+    diff_base: Option<String>,
     /// turn on debug output
     #[argh(switch)]
     debug: bool,
@@ -105,6 +108,7 @@ fn main() -> Result<()> {
     let Args {
         search,
         parent: parent_branch_name,
+        diff_base: base_commit_rev,
         debug,
     } = argh::from_env::<Args>();
 
@@ -116,61 +120,77 @@ fn main() -> Result<()> {
         };
     }
 
+    if parent_branch_name.is_some() && base_commit_rev.is_some() {
+        bail!("cannot specify both parent branch and direct diff base options");
+    }
+
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
 
     let commit_resolution_timer = Instant::now();
-    let head_commit = repo
-        .head()
-        .and_then(|reference| reference.peel_to_commit())
-        .context("error resolving head commit")?;
-    debug!("HEAD commit: {}", head_commit.id());
-
-    let root_branch_name = "master";
-    let parent_branch_name =
-        parent_branch_name.as_deref().unwrap_or(root_branch_name);
-    let parent_commit = repo
-        .revparse_single(parent_branch_name)
-        .and_then(|object| object.peel_to_commit())
-        .context("error resolving parent commit")?;
-    debug!("parent commit: {}", parent_commit.id());
-
-    let base_commit = if head_commit.id() == parent_commit.id() {
-        if parent_branch_name == root_branch_name {
-            // if HEAD is on the root branch, use the root commit of the repo
-            debug!("HEAD is on root branch, using root commit as diff base");
-            let root_commit = repo
-                .revwalk()
-                .and_then(|mut revwalk| {
-                    revwalk.push_head()?;
-                    revwalk
-                        .find_map(|id| {
-                            (|| {
-                                let id = id?;
-                                let commit = repo.find_commit(id)?;
-                                if commit.parent_count() == 0 {
-                                    return Ok(Some(commit));
-                                }
-                                Ok(None)
-                            })()
-                            .transpose()
-                        })
-                        .transpose()
-                })
-                .context("error finding root commit")?
-                .context("root commit not found")?;
-            root_commit
-        } else {
-            bail!("HEAD and parent refs are the same")
-        }
+    let base_commit = if let Some(base_commit_rev) = base_commit_rev {
+        debug!("using direct base reference");
+        let base_commit = repo
+            .revparse_single(&base_commit_rev)
+            .and_then(|object| object.peel_to_commit())
+            .context("error resolving base commit")?;
+        base_commit
     } else {
-        // otherwise, find the merge base between HEAD and master
-        debug!("using merge base between HEAD and parent as diff base");
-        let merge_base_commit = repo
-            .merge_base(head_commit.id(), parent_commit.id())
-            .and_then(|id| repo.find_commit(id))
-            .context("error getting merge base commit")?;
-        merge_base_commit
+        let head_commit = repo
+            .head()
+            .and_then(|reference| reference.peel_to_commit())
+            .context("error resolving head commit")?;
+        debug!("HEAD commit: {}", head_commit.id());
+
+        let root_branch_name = "master";
+        let parent_branch_name =
+            parent_branch_name.as_deref().unwrap_or(root_branch_name);
+        let parent_commit = repo
+            .revparse_single(parent_branch_name)
+            .and_then(|object| object.peel_to_commit())
+            .context("error resolving parent commit")?;
+        debug!("parent commit: {}", parent_commit.id());
+
+        if head_commit.id() == parent_commit.id() {
+            if parent_branch_name == root_branch_name {
+                // if HEAD is on the root branch, use the root commit of the
+                // repo
+                debug!(
+                    "HEAD is on root branch, using root commit as diff base"
+                );
+                let root_commit = repo
+                    .revwalk()
+                    .and_then(|mut revwalk| {
+                        revwalk.push_head()?;
+                        revwalk
+                            .find_map(|id| {
+                                (|| {
+                                    let id = id?;
+                                    let commit = repo.find_commit(id)?;
+                                    if commit.parent_count() == 0 {
+                                        return Ok(Some(commit));
+                                    }
+                                    Ok(None)
+                                })()
+                                .transpose()
+                            })
+                            .transpose()
+                    })
+                    .context("error finding root commit")?
+                    .context("root commit not found")?;
+                root_commit
+            } else {
+                bail!("HEAD and parent refs are the same")
+            }
+        } else {
+            // otherwise, find the merge base between HEAD and master
+            debug!("using merge base between HEAD and parent as diff base");
+            let merge_base_commit = repo
+                .merge_base(head_commit.id(), parent_commit.id())
+                .and_then(|id| repo.find_commit(id))
+                .context("error getting merge base commit")?;
+            merge_base_commit
+        }
     };
     let commit_resolution_timer = commit_resolution_timer.elapsed();
 
