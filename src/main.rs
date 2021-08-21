@@ -1,7 +1,7 @@
 #![warn(rust_2018_idioms, clippy::all)]
 #![deny(clippy::correctness)]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use argh::FromArgs;
 use itertools::{Either, Itertools};
 use regex::Regex;
@@ -31,22 +31,33 @@ struct Line {
 fn main() -> Result<()> {
     let Args { search } = argh::from_env::<Args>();
 
-    let repo = git2::Repository::open_from_env()?;
-    let old_tree = repo.revparse_single("master")?.peel_to_tree()?;
-    let new_tree = repo.revparse_single("HEAD")?.peel_to_tree()?;
-    let diff = repo.diff_tree_to_tree(
-        Some(&old_tree),
-        Some(&new_tree),
-        Some(
-            git2::DiffOptions::new()
-                .include_untracked(true)
-                .recurse_untracked_dirs(true)
-                .include_unmodified(true)
-                .ignore_filemode(true)
-                .ignore_whitespace(true)
-                .context_lines(0),
-        ),
-    )?;
+    let repo = git2::Repository::open_from_env()
+        .context("error opening repository")?;
+    let old_tree = repo
+        .revparse_single("master")
+        .context("error parsing old rev")?
+        .peel_to_tree()
+        .context("error peeling old object to tree")?;
+    let new_tree = repo
+        .revparse_single("HEAD")
+        .context("error parsing new rev")?
+        .peel_to_tree()
+        .context("error peeling new object to tree")?;
+    let diff = repo
+        .diff_tree_to_tree(
+            Some(&old_tree),
+            Some(&new_tree),
+            Some(
+                git2::DiffOptions::new()
+                    .include_untracked(true)
+                    .recurse_untracked_dirs(true)
+                    .include_unmodified(true)
+                    .ignore_filemode(true)
+                    .ignore_whitespace(true)
+                    .context_lines(0),
+            ),
+        )
+        .context("error diffing")?;
     // TODO: do diff.find_similar
 
     let diff_lines =
@@ -56,7 +67,8 @@ fn main() -> Result<()> {
                 git2::DiffLineType::Deletion => false,
                 _ => return Ok(None),
             };
-            let content = str::from_utf8(line.content())?;
+            let content = str::from_utf8(line.content())
+                .context("error converting line content to utf8")?;
             let content = content.trim();
             // if the line is either added or deleted, one of these must be Some
             let lineno = line
@@ -80,7 +92,8 @@ fn main() -> Result<()> {
             } else {
                 Ok(None)
             }
-        })?;
+        })
+        .context("error processing diff")?;
 
     let (mut lines, removed): (Vec<_>, HashSet<_>) = diff_lines
         .into_iter()
