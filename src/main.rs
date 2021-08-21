@@ -12,13 +12,14 @@ use git2::{
     DiffOptions,
     Repository,
 };
+use regex::Regex;
 use std::str;
 
 /// Search the content of diffs between git tags.
 #[derive(Debug, FromArgs)]
 struct Args {
     #[argh(positional)]
-    search: String,
+    search: Regex,
 }
 
 fn main() -> Result<()> {
@@ -54,7 +55,7 @@ fn main() -> Result<()> {
             Some(file) => file,
             None => return Ok(()),
         };
-        if content.contains(search.as_str()) {
+        if search.is_match(content) {
             dbg!(added, content, lineno, file);
         }
         Ok(())
