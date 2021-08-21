@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = []
+
+[package]
+name = "git-branch-grep"
+version = "0.1.0"
+authors = ["Daniel Beckwith <djbsnx@gmail.com>"]
+edition = "2018"
