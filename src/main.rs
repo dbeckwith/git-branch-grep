@@ -138,6 +138,7 @@ fn main() -> Result<()> {
     let base_commit = if head_commit.id() == parent_commit.id() {
         if parent_branch_name == root_branch_name {
             // if HEAD is on the root branch, use the root commit of the repo
+            debug!("HEAD is on root branch, using root commit as diff base");
             let root_commit = repo
                 .revwalk()
                 .and_then(|mut revwalk| {
@@ -158,18 +159,17 @@ fn main() -> Result<()> {
                 })
                 .context("error finding root commit")?
                 .context("root commit not found")?;
-            debug!("HEAD is on root branch, using root commit as diff base");
             root_commit
         } else {
             bail!("HEAD and parent refs are the same")
         }
     } else {
         // otherwise, find the merge base between HEAD and master
+        debug!("using merge base between HEAD and parent as diff base");
         let merge_base_commit = repo
             .merge_base(head_commit.id(), parent_commit.id())
             .and_then(|id| repo.find_commit(id))
             .context("error getting merge base commit")?;
-        debug!("using merge base between HEAD and parent as diff base");
         merge_base_commit
     };
     let commit_resolution_timer = commit_resolution_timer.elapsed();
