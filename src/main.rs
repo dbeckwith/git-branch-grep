@@ -132,8 +132,11 @@ fn main() -> Result<()> {
                     .context_lines(0),
             ),
         )
+        .and_then(|mut diff| {
+            diff.find_similar(Some(git2::DiffFindOptions::new().all(true)))?;
+            Ok(diff)
+        })
         .context("error diffing")?;
-    // TODO: do diff.find_similar
 
     let diff_lines =
         process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
