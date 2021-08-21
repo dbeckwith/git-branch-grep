@@ -5,7 +5,7 @@ use anyhow::Result;
 use argh::FromArgs;
 use itertools::{Either, Itertools};
 use regex::Regex;
-use std::{collections::HashSet, path::PathBuf, str};
+use std::{collections::HashSet, ops::Range, path::PathBuf, str};
 
 /// Search the content of diffs between git tags.
 #[derive(Debug, FromArgs)]
@@ -23,6 +23,7 @@ struct DiffLine {
 #[derive(Debug, PartialEq, Eq)]
 struct Line {
     content: String,
+    range: Range<usize>,
     lineno: u32,
     path: PathBuf,
 }
@@ -66,11 +67,12 @@ fn main() -> Result<()> {
                 Some(path) => path,
                 None => return Ok(None),
             };
-            if search.is_match(content) {
+            if let Some(r#match) = search.find(content) {
                 Ok(Some(DiffLine {
                     added,
                     line: Line {
                         content: content.to_owned(),
+                        range: r#match.range(),
                         lineno,
                         path: path.to_owned(),
                     },
@@ -80,7 +82,7 @@ fn main() -> Result<()> {
             }
         })?;
 
-    let (mut lines, removed): (Vec<_>, HashSet<_>) = dbg!(diff_lines)
+    let (mut lines, removed): (Vec<_>, HashSet<_>) = diff_lines
         .into_iter()
         .partition_map(|DiffLine { added, line }| {
             if added {
@@ -95,7 +97,23 @@ fn main() -> Result<()> {
             lines.remove(idx);
         }
     }
-    dbg!(lines);
+
+    for Line {
+        content,
+        range,
+        lineno,
+        path,
+    } in lines
+    {
+        let path = path.display();
+        let before = &content[..range.start];
+        let after = &content[range.end..];
+        let r#match = &content[range];
+        println!(
+            "\x1b[32m{}\x1b[m:\x1b[33m{}\x1b[m: {}\x1b[36;1m{}\x1b[m{}",
+            path, lineno, before, r#match, after
+        );
+    }
 
     Ok(())
 }
