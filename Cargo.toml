@@ -9,4 +9,6 @@ authors = ["Daniel Beckwith <djbsnx@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+anyhow = "1.0.41"
 argh = "0.1.4"
+git2 = "0.13.20"
