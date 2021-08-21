@@ -6,7 +6,14 @@ use anyhow::{bail, Context, Result};
 use argh::FromArgs;
 use itertools::{Either, Itertools};
 use regex::Regex;
-use std::{collections::HashSet, fmt, ops::Range, path::PathBuf, str};
+use std::{
+    collections::HashSet,
+    fmt,
+    ops::Range,
+    path::PathBuf,
+    str,
+    time::Instant,
+};
 
 /// Search the content of diffs between git tags.
 ///
@@ -78,6 +85,7 @@ fn main() -> Result<()> {
     let repo = git2::Repository::open_from_env()
         .context("error opening repository")?;
 
+    let commit_resolution_timer = Instant::now();
     let head_commit = repo
         .head()
         .and_then(|reference| reference.peel_to_commit())
@@ -140,10 +148,12 @@ fn main() -> Result<()> {
         }
         merge_base_commit
     };
+    let commit_resolution_timer = commit_resolution_timer.elapsed();
 
     if debug {
         debug!("diff base commit: {}", base_commit.id());
     }
+    let diff_timer = Instant::now();
     let old_tree = base_commit.tree().context("error getting old tree")?;
     let diff = repo
         .diff_tree_to_workdir_with_index(
@@ -164,7 +174,9 @@ fn main() -> Result<()> {
         //     Ok(diff)
         // })
         .context("error diffing")?;
+    let diff_timer = diff_timer.elapsed();
 
+    let diff_process_timer = Instant::now();
     let diff_lines =
         process_diff(&diff, git2::DiffFormat::Patch, |delta, _hunk, line| {
             let added = match line.origin_value() {
@@ -212,7 +224,9 @@ fn main() -> Result<()> {
             }
         })
         .context("error processing diff")?;
+    let diff_process_timer = diff_process_timer.elapsed();
 
+    let line_partition_timer = Instant::now();
     let (lines, mut removed): (Vec<_>, HashSet<_>) = diff_lines
         .into_iter()
         .partition_map(|DiffLine { added, line }| {
@@ -222,7 +236,9 @@ fn main() -> Result<()> {
                 Either::Right(line.content)
             }
         });
+    let line_partition_timer = line_partition_timer.elapsed();
 
+    let line_print_timer = Instant::now();
     for line in lines {
         if removed.remove(&line.content) {
             if debug {
@@ -231,6 +247,21 @@ fn main() -> Result<()> {
         } else {
             println!("{}", line);
         }
+    }
+    let line_print_timer = line_print_timer.elapsed();
+
+    if debug {
+        debug!("timings:");
+        macro_rules! show_timer {
+            ($name:expr, $timer:expr) => {
+                debug!("  {}: {:.3}s", $name, $timer.as_secs_f32());
+            };
+        }
+        show_timer!("commit resolution", commit_resolution_timer);
+        show_timer!("diff", diff_timer);
+        show_timer!("diff process", diff_process_timer);
+        show_timer!("line partition", line_partition_timer);
+        show_timer!("line print", line_print_timer);
     }
 
     Ok(())
