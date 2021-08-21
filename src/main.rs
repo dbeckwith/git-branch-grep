@@ -30,7 +30,7 @@ struct Args {
     /// "master"/"main"
     #[argh(option, short = 'p')]
     parent: Option<String>,
-    /// a reference to a commit to diff against, overrides `parent`
+    /// a reference to a commit to diff against
     #[argh(option, short = 'd')]
     diff_base: Option<String>,
     /// turn on debug output
