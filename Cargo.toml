@@ -6,11 +6,11 @@ members = []
 name = "git-branch-grep"
 version = "0.1.0"
 authors = ["Daniel Beckwith <djbsnx@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-anyhow = "1.0.41"
-argh = "0.1.4"
+anyhow = "1.0.57"
+argh = "0.1.7"
 atty = "0.2.14"
-git2 = "0.13.20"
-regex = "1.5.4"
+git2 = "0.14.4"
+regex = "1.5.6"

@@ -187,14 +187,14 @@ fn main() -> Result<()> {
             .context("error resolving head commit")?;
         debug!("HEAD commit: {}", head_commit.id());
 
-        let root_branch_head_commit =
-            std::array::IntoIter::new(["refs/heads/master", "refs/heads/main"])
-                .find_map(|name| {
-                    repo.find_reference(name)
-                        .and_then(|reference| reference.peel_to_commit())
-                        .ok()
-                })
-                .context("root branch not found")?;
+        let root_branch_head_commit = ["refs/heads/master", "refs/heads/main"]
+            .into_iter()
+            .find_map(|name| {
+                repo.find_reference(name)
+                    .and_then(|reference| reference.peel_to_commit())
+                    .ok()
+            })
+            .context("root branch not found")?;
         let parent_commit = if let Some(parent_branch_name) = parent_branch_name
         {
             repo.find_reference(&format!("refs/heads/{}", parent_branch_name))
